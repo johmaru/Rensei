@@ -4,7 +4,7 @@ pub fn main() !void {
     var allocator_val= gpa.allocator();
     const allocator = &allocator_val;
 
-    const source = "42 test";
+    const source = "2 * (3 + 4) + 5";
 
     std.debug.print("Source: \"{s}\"\n", .{source});
 
@@ -52,7 +52,7 @@ pub fn main() !void {
         std.debug.print("AST Node Kind: {any}", .{ast_node.kind});
         if (ast_node.kind == .NumberLiteral) {
             std.debug.print(", Value: {?}\n", .{ast_node.value});
-        } else if (ast_node.kind == .Indentifier) {
+        } else if (ast_node.kind == .Identifier) {
             std.debug.print(", Value: {s}\n", .{ast_node.identifier_value.?});
         } else {
             std.debug.print("\n", .{});
@@ -66,8 +66,8 @@ pub fn main() !void {
         // test処理
         switch (result) {
             .Number => |num_val| {
-                if (num_val == 42) { 
-                    std.debug.print("Result is 42!\n", .{});
+                if (num_val == 19) { 
+                    std.debug.print("Result is 19!\n", .{});
                 } else {
                     std.debug.print("Result (Number): {d}\n", .{num_val});
                 }

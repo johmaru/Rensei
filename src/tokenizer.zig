@@ -88,8 +88,106 @@ pub const Tokenizer = struct {
                 continue;
             }
 
-            std.debug.print("Warning: Unknown character '{c}' at position {d}. Skipping.\n", .{ current_char, self.int_pos });
-            self.int_pos += 1;
+            // +-*/()<>{},=;.
+
+            switch (current_char) {
+                '+' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Plus,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '-' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Minus,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '*' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Multiply,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '/' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Divide,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+
+                '(' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.LeftParen,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                ')' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.RightParen,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+
+                else => {
+                    std.debug.print("Warning: Unknown character '{c}' at position {d}. Skipping.\n", .{ current_char, self.int_pos });
+                    self.int_pos += 1;
+                }
+            }
         }
 
         const eof_token: *Token = try self.main_alloc.create(Token);
