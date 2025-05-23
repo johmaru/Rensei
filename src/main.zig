@@ -4,7 +4,7 @@ pub fn main() !void {
     var allocator_val= gpa.allocator();
     const allocator = &allocator_val;
 
-    const source = "2 * (3 + 4) + 5";
+    const source = "++ 13";
 
     std.debug.print("Source: \"{s}\"\n", .{source});
 

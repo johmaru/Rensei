@@ -31,7 +31,9 @@ pub const NodeKind = enum  {
        EndOfFile,
        Invalid,
        Plus,
+       Increment,
        Minus,
+       Decrement,
        Multiply,
        Divide,
        LeftParen,
@@ -50,6 +52,7 @@ pub const NodeKind = enum  {
         NumberLiteral,
         Identifier,
         BinaryOperation,
+        UnaryOperation,
     };
 
     pub const BinaryOperator = enum {
@@ -59,6 +62,11 @@ pub const NodeKind = enum  {
         Divide,
     };
 
+    pub const UnaryOperator = enum {
+        PreIncrement,
+        PreDecrement,
+    };
+
     pub const AstNode = struct {
         kind: AstNodeKind,
         value: ?i64 = null,
@@ -66,6 +74,8 @@ pub const NodeKind = enum  {
         operator: ?BinaryOperator = null,
         left: ?*AstNode = null,
         right: ?*AstNode = null,
+        unary_operator: ?UnaryOperator = null,
+        operand: ?*AstNode = null,
         allocator: *std.mem.Allocator,
 
         pub fn deinit(self: *AstNode) void {
@@ -74,6 +84,10 @@ pub const NodeKind = enum  {
             }
             if (self.right) |right_node| {
                 right_node.deinit();
+            }
+
+            if (self.operand) |operand_node| {
+                operand_node.deinit();
             }
 
             if (self.kind == .Identifier) {
@@ -182,7 +196,32 @@ pub const Parser = struct {
         TypeMismatch,
         InvalidNode,
         OutOfMemory,
+        UnsupportedUnaryOperation,
     };
+
+    fn parse_unary(self: *Parser) ParseError!*AstNode {
+        if (self.current_token) |tok| {
+            const unary_op_kind = switch (tok.kind) {
+                .Increment => UnaryOperator.PreIncrement,
+                .Decrement => UnaryOperator.PreDecrement,
+                else => return self.parse_primary(),
+            };
+
+            self.advance();
+
+            const operand_node = try self.parse_primary();
+
+            const node = try self.allocator.create(AstNode);
+            node.* = AstNode{
+                .kind = AstNodeKind.UnaryOperation,
+                .unary_operator = unary_op_kind,
+                .operand = operand_node,
+                .allocator = self.allocator,
+            };
+            return node;
+        }
+        return self.parse_primary();
+    }
 
     fn parse_primary(self: *Parser) ParseError!*AstNode {
 
@@ -208,7 +247,7 @@ pub const Parser = struct {
     }
 
     fn parse_multiplicative(self: *Parser) ParseError!*AstNode {
-        var left = try self.parse_primary();
+        var left = try self.parse_unary();
 
         while (self.current_token) |tok| {
             const op = switch (tok.kind) {
@@ -218,7 +257,7 @@ pub const Parser = struct {
             };
 
             self.advance();
-            const right = try self.parse_primary();
+            const right = try self.parse_unary();
 
             const node = try self.allocator.create(AstNode);
             node.* = AstNode{
@@ -266,7 +305,22 @@ pub const Parser = struct {
                     };
                 }
                 return error.TypeMismatch;
-            }
+            },
+            .UnaryOperation => {
+                const operand_val = try self.evalute(node.operand.?);
+                defer operand_val.deinit(self.allocator);
+
+                if (operand_val == .Number) {
+                    const result = switch (node.unary_operator.?) {
+                        .PreIncrement => operand_val.Number + 1,
+                        .PreDecrement => operand_val.Number - 1,
+                    };
+                    return EvaluatedValue{
+                        .Number = result,
+                    };
+                }
+                return error.TypeMismatch;
+            },
 
         }
     }

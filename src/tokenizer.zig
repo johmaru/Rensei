@@ -18,6 +18,22 @@ pub const Tokenizer = struct {
         return self;
     }
 
+    fn peek(self: *Tokenizer, offset: usize) ?u8 {
+        const pos = self.int_pos + offset;
+        if (pos >= self.string_source.len) {
+            return null;
+        }
+        return self.string_source[pos];
+    }
+
+    fn current(self: *Tokenizer) ?u8 {
+        return self.peek(0);
+    }
+
+    fn next_char(self: *Tokenizer) ?u8 {
+        return self.peek(1);
+    }
+
     pub fn tokenize(self: *Tokenizer) !?*Token {
 
         while (self.int_pos < self.string_source.len) {
@@ -89,9 +105,28 @@ pub const Tokenizer = struct {
             }
 
             // +-*/()<>{},=;.
-
+        
             switch (current_char) {
                 '+' => {
+
+                    if (self.next_char()) |next| {
+                        if (next == '+') {
+                            const op_token: *Token = try self.main_alloc.create(Token);
+                            op_token.* = Token{
+                                .kind = TokenKind.Increment,
+                                .string_index = self.int_pos,
+                                .length = 2,
+                                .prev = current_token,
+                                .next = null,
+                            };
+
+                            current_token.next = op_token;
+                            current_token = op_token;
+                            self.int_pos += 2;
+                            continue;
+                        }
+                    }
+
                     const op_token: *Token = try self.main_alloc.create(Token);
                     op_token.* = Token{
                         .kind = TokenKind.Plus,
@@ -107,6 +142,25 @@ pub const Tokenizer = struct {
                     continue;
                 },
                 '-' => {
+                    
+                    if (self.next_char()) |next| {
+                        if (next == '-') {
+                            const op_token: *Token = try self.main_alloc.create(Token);
+                            op_token.* = Token{
+                                .kind = TokenKind.Decrement,
+                                .string_index = self.int_pos,
+                                .length = 2,
+                                .prev = current_token,
+                                .next = null,
+                            };
+
+                            current_token.next = op_token;
+                            current_token = op_token;
+                            self.int_pos += 2;
+                            continue;
+                        }
+                    }
+
                     const op_token: *Token = try self.main_alloc.create(Token);
                     op_token.* = Token{
                         .kind = TokenKind.Minus,
