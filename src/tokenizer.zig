@@ -6,9 +6,9 @@ const TokenKind = parser_module.TokenKind;
 pub const Tokenizer = struct {
     string_source: []const u8,
     int_pos: usize,
-    main_alloc: *std.mem.Allocator,
+    main_alloc: std.mem.Allocator,
 
-    pub fn init(allocator: *std.mem.Allocator, source: []const u8) !*Tokenizer {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8) !*Tokenizer {
         const self = try allocator.create(Tokenizer);
         self.* = Tokenizer{
             .string_source = source,
@@ -16,6 +16,10 @@ pub const Tokenizer = struct {
             .main_alloc = allocator,
         };
         return self;
+    }
+
+    pub fn deinit(self: *Tokenizer) void {
+        self.main_alloc.destroy(self);
     }
 
     fn peek(self: *Tokenizer, offset: usize) ?u8 {
@@ -38,7 +42,7 @@ pub const Tokenizer = struct {
 
         while (self.int_pos < self.string_source.len) {
             const current_char = self.string_source[self.int_pos];
-            if (current_char == ' ' or current_char == '\n' or current_char == '\t') {
+            if (std.ascii.isWhitespace(current_char)) {
                 self.int_pos += 1;
                 continue;
             }
@@ -61,9 +65,49 @@ pub const Tokenizer = struct {
 
         while (self.int_pos < self.string_source.len) {
             const current_char: u8 = self.string_source[self.int_pos];
-            if (current_char == ' ' or current_char == '\n' or current_char == '\t') {
+            if (std.ascii.isWhitespace(current_char)) {
                 self.int_pos += 1;
                 continue;
+            }
+
+            const nfunc_keyword = "nfunc";
+            if (std.mem.startsWith(u8, self.string_source[self.int_pos..], nfunc_keyword)) {
+                if (self.string_source.len == self.int_pos + nfunc_keyword.len or
+                !std.ascii.isAlphanumeric(self.string_source[self.int_pos + nfunc_keyword.len]))
+                {
+                    const nfunc_token: *Token = try self.main_alloc.create(Token);
+                    nfunc_token.* = Token{
+                        .kind = TokenKind.KeywordNtFunc,
+                        .string_index = self.int_pos,
+                        .length = nfunc_keyword.len,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = nfunc_token;
+                    current_token = nfunc_token;
+                    self.int_pos += nfunc_keyword.len;
+                    continue;
+                }
+            }
+
+            const keyword_int = "int";
+            if (std.mem.startsWith(u8, self.string_source[self.int_pos..], keyword_int)) {
+                if (self.string_source.len == self.int_pos + keyword_int.len or
+                !std.ascii.isAlphanumeric(self.string_source[self.int_pos + keyword_int.len]))
+                {
+                    const int_token: *Token = try self.main_alloc.create(Token);
+                    int_token.* = Token{
+                        .kind = TokenKind.KeywordInt,
+                        .string_index = self.int_pos,
+                        .length = keyword_int.len,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = int_token;
+                    current_token = int_token;
+                    self.int_pos += keyword_int.len;
+                    continue;
+                }
             }
 
             if (std.ascii.isDigit(current_char)) {
@@ -85,7 +129,7 @@ pub const Tokenizer = struct {
                 continue;
             }
 
-            if (std.ascii.isAlphabetic(current_char)) {
+            if (std.ascii.isAlphabetic(current_char) or current_char == '_') {
                 const start_pos = self.int_pos;
                 while (self.int_pos < self.string_source.len and (std.ascii.isAlphanumeric(self.string_source[self.int_pos]) or self.string_source[self.int_pos] == '_')) {
                     self.int_pos += 1;
@@ -104,7 +148,7 @@ pub const Tokenizer = struct {
                 continue;
             }
 
-            // +-*/()<>{},=;.
+            // +-*/()<>,=;.
         
             switch (current_char) {
                 '+' => {
@@ -144,7 +188,21 @@ pub const Tokenizer = struct {
                 '-' => {
                     
                     if (self.next_char()) |next| {
-                        if (next == '-') {
+                        if (next == '>') {
+                            const op_token: *Token = try self.main_alloc.create(Token);
+                            op_token.* = Token{
+                                .kind = TokenKind.Arrow,
+                                .string_index = self.int_pos,
+                                .length = 2,
+                                .prev = current_token,
+                                .next = null,
+                            };
+                            current_token.next = op_token;
+                            current_token = op_token;
+                            self.int_pos += 2;
+                            continue;
+                        }
+                       else if (next == '-') {
                             const op_token: *Token = try self.main_alloc.create(Token);
                             op_token.* = Token{
                                 .kind = TokenKind.Decrement,
@@ -225,6 +283,128 @@ pub const Tokenizer = struct {
                     const op_token: *Token = try self.main_alloc.create(Token);
                     op_token.* = Token{
                         .kind = TokenKind.RightParen,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                ';' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Semicolon,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                ',' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Comma,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '[' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.LeftBracket,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                ']' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.RightBracket,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '{' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.LeftBrace,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '}' => {
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.RightBrace,
+                        .string_index = self.int_pos,
+                        .length = 1,
+                        .prev = current_token,
+                        .next = null,
+                    };
+                    current_token.next = op_token;
+                    current_token = op_token;
+
+                    self.int_pos += 1;
+                    continue;
+                },
+                '=' => {
+                    if (self.next_char()) |next| {
+                        if (next == '=') {
+                            const op_token: *Token = try self.main_alloc.create(Token);
+                            op_token.* = Token{
+                                .kind = TokenKind.Equal,
+                                .string_index = self.int_pos,
+                                .length = 2,
+                                .prev = current_token,
+                                .next = null,
+                            };
+                            current_token.next = op_token;
+                            current_token = op_token;
+                            self.int_pos += 2;
+                            continue;
+                        }
+                    }
+
+                    const op_token: *Token = try self.main_alloc.create(Token);
+                    op_token.* = Token{
+                        .kind = TokenKind.Assign,
                         .string_index = self.int_pos,
                         .length = 1,
                         .prev = current_token,
