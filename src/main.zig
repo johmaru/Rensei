@@ -3,7 +3,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator= gpa.allocator();
 
-    const source = "int x = 10 + 5;";
+    const source = "int x = 10 + 5; int y = x * 2; int z = x + y;";
 
     std.debug.print("Source: \"{s}\"\n", .{source});
 
@@ -53,7 +53,7 @@ pub fn main() !void {
                 if (et.kind == .EndOfFile) break;
                 err_tok = et.next;
             }
-            break;
+            return;
         };
         defer ast_node.deinit();
 
@@ -91,19 +91,26 @@ pub fn main() !void {
         // test処理
         switch (result) {
             .Number => |num_val| {
-                if (num_val == 19) { 
-                    std.debug.print("Result is 19!\n", .{});
-                } else {
-                    std.debug.print("Result (Number): {d}\n", .{num_val});
-                }
+                std.debug.print("Result (Number): {d}\n", .{num_val});
             },
             .Identifier => |id_str| {
                 std.debug.print("Result (Identifier): {s}\n", .{id_str});
             },
         }
-        std.debug.print("Final Symbol Table:\n", .{});
-        symbol_table.print();
         std.debug.print("---\n", .{});
+    }
+
+    std.debug.print("Final Symbol Table:\n", .{});
+    symbol_table.print();
+
+    const symbol_z = symbol_table.find_symbol("z") orelse {
+        std.debug.print("Symbol 'z' not found in the symbol table.\n", .{});
+        return;
+    };
+    if (symbol_z.value) |value| {
+        std.debug.print("Symbol 'z' found with value: {d}\n", .{value.Int});
+    } else {
+        std.debug.print("Symbol 'z' found but no value assigned.\n", .{});
     }
 }
 

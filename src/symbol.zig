@@ -13,13 +13,28 @@ pub const SymbolType = enum {
     String,
 };
 
+pub const value_type = union(enum) {
+    Int: i64,
+    Boolean: bool,
+    String: []const u8,
+
+    pub fn deinit(self: value_type, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .String => |str| {
+                allocator.free(str);
+            },
+            else => {},
+        }
+    }
+};
+
 
 pub const Symbol = struct {
     name: []const u8,
     kind: SymbolKind,
     symbol_type: SymbolType,
     address: usize,
-    value: ?u8,
+    value: ?value_type,
     scope: *Scope,
     attributes: ?*std.ArrayList([]const u8),
 
@@ -54,6 +69,9 @@ pub const Symbol = struct {
             }
             attrs.deinit();
             self.allocator.destroy(attrs);
+        }
+        if (self.value) |val| {
+            val.deinit(self.allocator);
         }
         self.allocator.destroy(self);
     }

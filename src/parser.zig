@@ -725,11 +725,20 @@ pub const Parser = struct {
                 }
             },
             .Identifier => {
-                const allocator =  self.allocator;
-                const copied_id = allocator.dupe(u8, node.identifier_value orelse return error.InvalidNode) catch return error.OutOfMemory;
-                return EvaluatedValue{
-                    .Identifier = copied_id,
-                };
+               const ident_name = node.identifier_value orelse return error.InvalidNode;
+               const symbol = self.symbol_table.find_symbol(ident_name) orelse {
+                    return error.TypeMismatch;
+               };
+               if (symbol.value) |sym_val| {
+                switch (sym_val) {
+                    .Int => |int_val| return EvaluatedValue{
+                        .Number = int_val,
+                    },
+                    else => return error.TypeMismatch,
+                }
+               } else {
+                    return error.TypeMismatch;
+               }
             },
             .BinaryOperation => {
                 const left_val = try self.evalute(node.left.?);
@@ -774,36 +783,53 @@ pub const Parser = struct {
                     const init_val = try self.evalute(init_node);
                     
                     if (node.variable_name) |var_name| {
-                        if (self.symbol_table.find_symbol(var_name)) |symbol| {
-                            if (init_val == .Number) {
-                                _ = symbol;
-                            }
-                         }
+                        const symbol = self.symbol_table.find_symbol(var_name) orelse {
+                            init_val.deinit(self.allocator);
+                            return error.InvalidNode;
+                        };
+
+                        switch (init_val) {
+                            .Number => |num_val| {
+                                symbol.value = Symbol.value_type{
+                                    .Int = num_val,
+                                };
+                            },
+                            .Identifier => |id_slice| {
+                                _ = id_slice;
+                                init_val.deinit(self.allocator);
+                                return error.TypeMismatch;
+                            },
+                        }
+                    } else {
+                        init_val.deinit(self.allocator);
+                        return error.InvalidNode;
                     }
                     return init_val;
                }
                 return error.InvalidNode;
             },
             .StatementList => {
-                var result: EvaluatedValue = undefined;
-                for (node.statements.?.items) |stmt| {
-                    const eval_result = try self.evalute(stmt);
-                    defer eval_result.deinit(self.allocator);
-
-                    result.deinit(self.allocator);
-
-                    if (eval_result == .Number) {
-                        result = EvaluatedValue{
-                            .Number = eval_result.Number,
-                        };
-                    } else if (eval_result == .Identifier) {
-                        const copied_id = try self.allocator.dupe(u8, eval_result.Identifier);
-                        result = EvaluatedValue{
-                            .Identifier = copied_id,
-                        };
+                var result: ?EvaluatedValue = undefined;
+                
+                if (node.statements) |statements_list| {
+                    if (statements_list.items.len == 0) {
+                        return error.InvalidNode;
                     }
+                    for(statements_list.items) |stmt_node| {
+                        if (result) |prev_result| {
+                            prev_result.deinit(self.allocator);
+                        }
+                        result = try self.evalute(stmt_node);
+                    }
+                } else {
+                    return error.InvalidNode;
                 }
-                return result;
+
+                if (result) |final_result| {
+                    return final_result;
+                } else {
+                    return error.InvalidNode;
+                }
             },
             .SingleContainer => {
                 // 単一コンテナの評価はここでは行わない
