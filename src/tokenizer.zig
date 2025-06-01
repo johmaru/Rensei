@@ -70,6 +70,41 @@ pub const Tokenizer = struct {
                 continue;
             }
 
+            if (current_char == '[') {
+                const start_pos = self.int_pos;
+                var balance: usize = 1;
+                var temp_pos = self.int_pos + 1;
+                var found_match = false;
+                while(temp_pos < self.string_source.len) {
+                    if (self.string_source[temp_pos] == '[') {
+                        balance += 1;
+                    } else if (self.string_source[temp_pos] == ']') {
+                        balance -= 1;
+                        if (balance == 0) {
+                            const length = temp_pos - start_pos + 1;
+                            const container_token: *Token = try self.main_alloc.create(Token);
+                            container_token.* = Token{
+                                .kind = TokenKind.Container,
+                                .string_index = start_pos,
+                                .length = length,
+                                .prev = current_token,
+                                .next = null,
+                            };
+
+                            current_token.next = container_token;
+                            current_token = container_token;
+                            self.int_pos = temp_pos + 1;
+                            found_match = true;
+                            break;
+                        }
+                    }
+                    temp_pos += 1;
+                }
+                if (found_match) {
+                    continue;
+                }
+            }
+
             const nfunc_keyword = "nfunc";
             if (std.mem.startsWith(u8, self.string_source[self.int_pos..], nfunc_keyword)) {
                 if (self.string_source.len == self.int_pos + nfunc_keyword.len or

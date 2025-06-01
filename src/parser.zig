@@ -196,7 +196,7 @@ pub const Parser = struct {
 
             const param_node = try self.parse_identifier();
             
-            _ = try self.symbol_table.add_symbol(param_node.identifier_value.?, .Variable, .Int);
+            _ = try self.symbol_table.add_symbol(param_node.identifier_value.?, .Variable, .Int, null);
 
             try params_ast_nodes.append(param_node);
         }
@@ -257,7 +257,7 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        try self.symbol_table.enter_scope();
+        try self.symbol_table.enter_scope(Symbol.ScopeKind.Block);
         defer self.symbol_table.exit_scope();
 
         while (self.current_token.?.kind != TokenKind.RightBrace and
@@ -355,7 +355,12 @@ pub const Parser = struct {
         OutOfMemory,
         UnsupportedUnaryOperation,
         InvalidContainerFormat,
+        InvalidContainerFormat1,
+        InvalidContainerFormat2,
+        InvalidContainerFormat3,
         InvalidContainerBlock,
+        ContainerKeywardLenIsZero,
+        ContainerIdentifierLenIsZero,
         NotSupportedThisVersion,
     };
 
@@ -395,10 +400,13 @@ pub const Parser = struct {
               try self.expect_token(TokenKind.Semicolon);
               return expr_node;
             },
+            .Container => {
+                const container_node = try self.parse_container_chain();
+
+                return container_node;
+            },
             .KeywordNtFunc => {
                 self.advance();
-
-                try self.expect_token(TokenKind.Semicolon);
 
                 const func_name_tok = self.current_token orelse return error.UnexpectedEof;
                 if (func_name_tok.kind != TokenKind.Identifier) {
@@ -406,23 +414,21 @@ pub const Parser = struct {
                 }
                 const func_name_str = self.source[func_name_tok.string_index..func_name_tok.string_index + func_name_tok.length];
                 const func_name_copy = try self.allocator.dupe(u8, func_name_str);
+                errdefer self.allocator.free(func_name_copy);
                 self.advance();
 
-                try self.expect_token(TokenKind.Semicolon);
+                _ = try self.symbol_table.add_symbol(func_name_copy, .Function, .Int, null);
 
-                _ = try self.symbol_table.add_symbol(func_name_copy, .Function, .Int);
-
-                try self.symbol_table.enter_scope();
+                try self.symbol_table.enter_scope(Symbol.ScopeKind.Function);
                 defer self.symbol_table.exit_scope();
 
                 const params_node = try self.parse_parameter_list_and_register_symbols();
 
-                try self.expect_token(TokenKind.Semicolon);
-            
+                errdefer params_node.deinit();
                 
                 const body_node = try self.parse_block_statement();
 
-                try self.expect_token(TokenKind.Semicolon);
+                errdefer body_node.deinit();
 
                 const func_node = try self.allocator.create(AstNode);
                 func_node.* = AstNode{
@@ -454,18 +460,27 @@ pub const Parser = struct {
                 errdefer self.allocator.free(type_name_copy);
 
                 var intializer_node: ?*AstNode = null;
+                var symbol_initial_value: ?Symbol.value_type = null;
                 if (self.current_token) |next_token| {
                     if (next_token.kind == TokenKind.Assign) {
                         self.advance();
                         intializer_node = self.parse_expression() catch |err| {
+                            self.allocator.free(var_name_copy);
+                            self.allocator.free(type_name_copy);
                             return err;
                         };
                     }
                 }
 
+                if (intializer_node.?.kind == AstNodeKind.NumberLiteral and intializer_node.?.value != null){
+                    symbol_initial_value = .{ .Int = intializer_node.?.value.? };
+                } else {
+                    symbol_initial_value = null;
+                }
+
                 try self.expect_token(TokenKind.Semicolon);
 
-                _ = try self.symbol_table.add_symbol(var_name_copy, .Variable, .Int);
+                _ = try self.symbol_table.add_symbol(var_name_copy, .Variable, .Int, symbol_initial_value);
 
                 const var_node = try self.allocator.create(AstNode);
                 var_node.* = AstNode{
@@ -526,7 +541,7 @@ pub const Parser = struct {
         var sub_parser = Parser.init(self.allocator, head_token, block_content_str);
 
         sub_parser.symbol_table = self.symbol_table;
-        try self.symbol_table.enter_scope();
+        try self.symbol_table.enter_scope(Symbol.ScopeKind.Block);
 
         // test
         self.symbol_table.print();
@@ -561,52 +576,169 @@ pub const Parser = struct {
         const full_container_str = self.source[container_token.string_index..container_token.string_index + container_token.length];
 
         if (full_container_str.len < 2 or full_container_str[0] != '[' or full_container_str[full_container_str.len - 1] != ']') {
-            return error.InvalidContainerFormat;
+            return error.InvalidContainerFormat1;
         }
-        const content_str = full_container_str[1..full_container_str.len - 1];
+        var content_str = full_container_str[1..full_container_str.len - 1];
 
-        var parts_iterator = std.mem.splitScalar(u8, content_str, ';');
+        content_str = std.mem.trim(u8, content_str, " \t\n\r");
 
-        const keyword_str = std.mem.trim(u8, parts_iterator.next() orelse return error.InvalidContainerFormat, " \t\n\r");
-        if (keyword_str.len == 0) {
-            return error.InvalidContainerFormat;
+        var keyword_end_index: usize = 0;
+        while (keyword_end_index < content_str.len and
+               content_str[keyword_end_index] != ' ' and
+               content_str[keyword_end_index] != '(' and
+               content_str[keyword_end_index] != '{'
+        ) : (keyword_end_index +=1) {}
+        if (keyword_end_index == 0) {
+            return error.ContainerKeywardLenIsZero;
+        }
+        const keyword_str = content_str[0 .. keyword_end_index];
+        content_str = content_str[keyword_end_index..];
+        content_str = std.mem.trimLeft(u8, content_str, " \t\n\r");
+        
+        var identifier_end_index: usize = 0;
+        while (identifier_end_index < content_str.len and
+                content_str[identifier_end_index] != '(' and
+                content_str[identifier_end_index] != '{' and
+                content_str[identifier_end_index] != ' '
+        ) : (identifier_end_index +=1) {}
+        if (identifier_end_index == 0) {
+            return error.ContainerIdentifierLenIsZero;
+        }
+        const identifier_str = content_str[0 .. identifier_end_index];
+        content_str = content_str[identifier_end_index..];
+        content_str = std.mem.trimLeft(u8, content_str, " \t\n\r");
+
+
+        var args_node: ?*AstNode = null;
+        if (content_str.len > 0 and content_str[0] == '(') {
+            var balance: usize = 1;
+            var args_end_index: usize = 1;
+            while (args_end_index < content_str.len) {
+                if (content_str[args_end_index] == '(') {
+                    balance += 1;
+                }
+                else if (content_str[args_end_index] == ')') {
+                    balance -= 1;
+                    if (balance == 0) break;
+                }
+                args_end_index += 1;
+            }
+            if (balance != 0) {
+                return error.MissingCloseParen;
+            }
+
+            const args_cotent_str = content_str[1 .. args_end_index];
+
+            if (args_cotent_str.len > 0) {
+                var temp_tokenizer_for_args = try Tokenizer.init(self.allocator, args_cotent_str);
+                defer temp_tokenizer_for_args.deinit();
+                const head_token_for_args = try temp_tokenizer_for_args.tokenize();
+                defer if (head_token_for_args) |args_tok| parser_module.free_token_list(self.allocator, args_tok);
+
+                if (head_token_for_args != null and head_token_for_args.?.kind != TokenKind.EndOfFile) {
+                    var sub_parse_for_args = Parser.init(self.allocator, head_token_for_args, args_cotent_str, self.symbol_table);
+
+                    var params = std.ArrayList(*AstNode).init(self.allocator);
+                    errdefer {
+                        for (params.items) |param| {
+                            param.deinit();
+                        }
+                        params.deinit();
+                    }
+                    var first_param = true;
+                    while (sub_parse_for_args.current_token.?.kind != TokenKind.RightParen and 
+                           sub_parse_for_args.current_token.?.kind != TokenKind.EndOfFile) {
+                        if (!first_param) {
+                            try sub_parse_for_args.expect_token(TokenKind.Comma);
+                        }
+                        first_param = false;
+
+                        const param_node = try sub_parse_for_args.parse_identifier();
+                        try params.append(param_node);
+                    }
+                    const list_node = try self.allocator.create(AstNode);
+                    list_node.* = AstNode{
+                        .kind = AstNodeKind.StatementList,
+                        .allocator = self.allocator,
+                        .statements = params,
+                    };
+                    args_node = list_node;                 
+                } else {
+                const empty_args_node = try self.allocator.create(AstNode);
+                empty_args_node.* = AstNode{
+                    .kind = AstNodeKind.StatementList,
+                    .allocator = self.allocator,
+                    .statements = std.ArrayList(*AstNode).init(self.allocator),
+                };
+                args_node = empty_args_node;
+            }
+            } else {
+                const empty_args_node = try self.allocator.create(AstNode);
+                empty_args_node.* = AstNode{
+                    .kind = AstNodeKind.StatementList,
+                    .allocator = self.allocator,
+                    .statements = std.ArrayList(*AstNode).init(self.allocator),
+                };
+                args_node = empty_args_node;
+            }
+            content_str = content_str[args_end_index + 1..];
+            content_str = std.mem.trimLeft(u8, content_str, " \t\n\r");
+        } else {
+            const empty_args_node = try self.allocator.create(AstNode);
+            empty_args_node.* = AstNode{
+                .kind = AstNodeKind.StatementList,
+                .allocator = self.allocator,
+                .statements = std.ArrayList(*AstNode).init(self.allocator),
+            };
+            args_node = empty_args_node;
         }
 
-        const identifier_str = std.mem.trim(u8, parts_iterator.next() orelse return error.InvalidContainerFormat, " \t\n\r");
-        if (identifier_str.len == 0) {
-            return error.InvalidContainerFormat;
-        }
-
-        const args_str = std.mem.trim(u8, parts_iterator.next() orelse return error.InvalidContainerFormat, " \t\n\r");
-        if (args_str.len == 0) {
-            return error.InvalidContainerFormat;
-        }
-        const args_node = try self.allocator.create(AstNode);
-        errdefer self.allocator.destroy(args_node);
-        args_node.* = AstNode{
-            .kind = AstNodeKind.Identifier,
-            .identifier_value = try self.allocator.dupe(u8, args_str),
-            .allocator = self.allocator,
-        };
-
-        const block_full_str = std.mem.trim(u8, parts_iterator.rest()," \t\n\r");
-        if (block_full_str.len < 2 or block_full_str[0] != '{' or block_full_str[block_full_str.len - 1] != '}') {
-            if (args_node.identifier_value) |id_val| self.allocator.free(id_val);
-            self.allocator.destroy(args_node);
+        if (content_str.len == 0 or content_str[0] != '{') {
+            if (args_node) |args_node_val| {
+                args_node_val.deinit();
+            }
             return error.InvalidContainerBlock;
         }
 
-        const block_inner_content = block_full_str[1 .. block_full_str.len - 1];
+        var body_balance: usize = 1;
+        var body_end_index: usize = 1;
+        while (body_end_index < content_str.len) {
+            if (content_str[body_end_index] == '{') {
+                body_balance += 1;
+            } else if (content_str[body_end_index] == '}') {
+                body_balance -= 1;
+                if (body_balance == 0) break;
+            }
+            body_end_index += 1;
+        }
 
-        var temp_tokenizer_for_container_block = try Tokenizer.init(self.allocator, block_inner_content);
-        defer temp_tokenizer_for_container_block.deinit();
-        const head_token_for_container_block = try temp_tokenizer_for_container_block.tokenize();
-        defer if (head_token_for_container_block) |cb_tok| parser_module.free_token_list(self.allocator, cb_tok);
+        if (body_balance != 0) {
+            if (args_node) |args_node_val| {
+                args_node_val.deinit();
+            }
+            return error.InvalidContainerBlock;
+        }
 
-        var sub_parser_for_container_block = Parser.init(self.allocator, head_token_for_container_block, block_inner_content,self.symbol_table);
-        sub_parser_for_container_block.symbol_table = self.symbol_table;
+        const block_inner_content = content_str[1 .. body_end_index];
 
-        try self.symbol_table.enter_scope();
+        var temp_tokenizer_for_body = try Tokenizer.init(self.allocator, block_inner_content);
+        defer temp_tokenizer_for_body.deinit();
+        const head_token_for_body = try temp_tokenizer_for_body.tokenize();
+        defer if (head_token_for_body) |body_tok| parser_module.free_token_list(self.allocator, body_tok);
+
+        var sub_parser_for_body = Parser.init(self.allocator, head_token_for_body, block_inner_content, self.symbol_table);
+
+        const dup_identifier_str_for_scope = try self.allocator.dupe(u8, identifier_str);
+
+        try self.symbol_table.enter_scope_with_name(dup_identifier_str_for_scope, Symbol.ScopeKind.Container);
+
+        var exit_scope = false;
+        defer if (!exit_scope) {
+            self.symbol_table.exit_scope_with_name(dup_identifier_str_for_scope) catch |err| {
+                std.debug.print("Error exiting container scope: {any}\n", .{err});
+            };
+            self.allocator.free(dup_identifier_str_for_scope);
+        };
 
         var container_statements = std.ArrayList(*AstNode).init(self.allocator);
         errdefer {
@@ -614,15 +746,32 @@ pub const Parser = struct {
                 stmt.deinit();
             }
             container_statements.deinit();
-            self.symbol_table.exit_scope();
         }
 
-        while (sub_parser_for_container_block.current_token.?.kind != TokenKind.EndOfFile) {
-            const stmt_node = try sub_parser_for_container_block.parse_statement();
+        while (sub_parser_for_body.current_token.?.kind != TokenKind.EndOfFile) {
+            const stmt_node = try sub_parser_for_body.parse_statement();
             try container_statements.append(stmt_node);
         }
 
-        self.symbol_table.exit_scope();
+        if (std.mem.eql(u8, identifier_str, "test")) {
+            const symbol_z_in_container = self.symbol_table.find_symbol("z");
+            if (symbol_z_in_container) |sym_z| {
+                std.debug.print("\n[DEBUG] Found 'z' in container 'test' scope: {s}\n", .{sym_z.name});
+                if (sym_z.value) |val| {
+                    std.debug.print("[DEBUG] Value of 'z': {any}\n", .{val});
+                } else {
+                    std.debug.print("[DEBUG] 'z' has no value assigned in symbol table during parse.\n", .{});
+                }
+            } else {
+                std.debug.print("\n[DEBUG] 'z' not found in container 'test' scope during parse.\n", .{});
+            }
+        }
+
+        self.symbol_table.exit_scope_with_name(dup_identifier_str_for_scope) catch |err| {
+            std.debug.print("Error exiting container scope: {any}\n", .{err});
+        };
+        exit_scope = true;
+        self.allocator.free(dup_identifier_str_for_scope);
 
         const parsed_block_node = try self.allocator.create(AstNode);
         parsed_block_node.* = AstNode{
@@ -632,11 +781,12 @@ pub const Parser = struct {
         };
 
         const node = try self.allocator.create(AstNode);
-         errdefer{
-            if (args_node.identifier_value) |id_val| self.allocator.free(id_val);
-            self.allocator.destroy(args_node);
+        errdefer {
+            if (args_node) |args_node_val| {
+                args_node_val.deinit();
+            }
         }
-        
+
         node.* = AstNode{
             .kind = AstNodeKind.SingleContainer,
             .allocator = self.allocator,
@@ -651,7 +801,7 @@ pub const Parser = struct {
     fn parse_container_chain(self: *Parser) ParseError!*AstNode {
         const first_container_token = self.current_token orelse return error.UnexpectedEof;
         if (first_container_token.kind != TokenKind.Container) {
-            return error.InvalidContainerFormat;
+            return error.InvalidContainerFormat1;
         }
         self.advance();
 
@@ -664,7 +814,7 @@ pub const Parser = struct {
                 const next_container_token = self.current_token orelse return error.UnexpectedEof;
                 if (next_container_token.kind != TokenKind.Container) {
                     left_node.deinit();
-                    return error.InvalidContainerFormat;
+                    return error.InvalidContainerFormat2;
                 }
                 self.advance();
 

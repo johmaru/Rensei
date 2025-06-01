@@ -1,9 +1,13 @@
 pub fn main() !void {
+    try debug_parse();    
+}
+
+fn debug_parse() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator= gpa.allocator();
 
-    const source = "int x = 10 + 5; int y = x * 2; int z = x + y;";
+    const source = "[nfunc test() { int z = 10;}]";
 
     std.debug.print("Source: \"{s}\"\n", .{source});
 
@@ -65,10 +69,51 @@ pub fn main() !void {
         } else if (ast_node.kind == .VariableDeclaration) {
             std.debug.print(", Name: {s}, Type: {s}", .{ast_node.variable_name.?, ast_node.variable_type.?});
             if (ast_node.initializer) |init_node| {
-                std.debug.print(", Initializer: present (kind: {any})\n", .{init_node.kind});
+                std.debug.print(", Initializer: present (kind: {any}", .{init_node.kind});
+                if (init_node.kind == .NumberLiteral) {
+                    std.debug.print(", Value: {?})", .{init_node.value});
+                } else {
+                    std.debug.print(")", .{});
+                }
+                std.debug.print("\n", .{});
             } else {
                 std.debug.print(", Initializer: none\n", .{});
             }
+        }else if (ast_node.kind == .FunctionDefinition) {
+           std.debug.print(", Name: {s}", .{ast_node.function_name.?});
+        
+            if (ast_node.function_params) |params_node| {
+                if (params_node.kind == .StatementList) {
+                    if (params_node.statements) |statements_list| {
+                        std.debug.print(", Parameters: {d} params", .{statements_list.items.len});
+                    } else {
+                        std.debug.print(", Parameters: (statement list is null)", .{});
+                    }
+                } else {
+                    std.debug.print(", Parameters: (details unavailable - not a StatementList)", .{});
+                }
+            } else {
+                std.debug.print(", Parameters: none", .{});
+            }
+       
+            if (ast_node.function_body) |body_node| {
+                if (body_node.kind == .StatementList) {
+                    if (body_node.statements) |statements_list| {
+                        std.debug.print(", Body: {d} statements", .{statements_list.items.len});
+                       
+                        if (statements_list.items.len > 0) {
+                            std.debug.print(" (first stmt kind: {any})", .{statements_list.items[0].kind});
+                        }
+                    } else {
+                        std.debug.print(", Body: (statement list is null)", .{});
+                    }
+                } else {
+                    std.debug.print(", Body: (details unavailable - not a StatementList)", .{});
+                }
+            } else {
+                std.debug.print(", Body: empty", .{});
+            }
+            std.debug.print("\n", .{});
         } else if (ast_node.kind == .BinaryOperation) {
              std.debug.print(", Operator: {any}\n", .{ast_node.operator.?});
         } else if (ast_node.kind == .UnaryOperation) {
@@ -103,6 +148,8 @@ pub fn main() !void {
     std.debug.print("Final Symbol Table:\n", .{});
     symbol_table.print();
 
+    std.debug.print("---\n", .{});
+
     const symbol_z = symbol_table.find_symbol("z") orelse {
         std.debug.print("Symbol 'z' not found in the symbol table.\n", .{});
         return;
@@ -118,6 +165,7 @@ const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const parser_module = @import("parser.zig");
 const Symbol_Table = @import("symbol.zig").SymbolTable;
+const Scope = @import("symbol.zig").Scope;
 const Parser = parser_module.Parser;
 const AstNode = parser_module.AstNode;
 const free_token_list = parser_module.free_token_list;
